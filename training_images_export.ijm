@@ -18,6 +18,7 @@ Dialog.addMessage("\n=== Cropping Options ===");
 Dialog.addCheckbox("Apply random cropping", true);
 Dialog.addNumber("Crop width (pixels):", 512);
 Dialog.addNumber("Crop height (pixels):", 512);
+Dialog.addNumber("Number of crops per image:", 1);
 Dialog.addMessage("\n=== 2D Slice Options (ignored for 3D mode) ===");
 Dialog.addNumber("Slice interval (export every Nth slice):", 5);
 Dialog.addMessage("Or specify custom slices (comma-separated, e.g., 5,10,15,20,25):");
@@ -32,6 +33,7 @@ ch4Export = Dialog.getCheckbox();
 applyCropping = Dialog.getCheckbox();
 cropWidth = Dialog.getNumber();
 cropHeight = Dialog.getNumber();
+numCropsPerImage = Dialog.getNumber();
 sliceInterval = Dialog.getNumber();
 customSlices = Dialog.getString();
 
@@ -54,10 +56,11 @@ if (lifFile == "") {
     exit("No file selected");
 }
 
-// Get directory and create export folders
-dir = File.getDirectory(lifFile);
-exportDir = dir + "Cellpose_Training" + File.separator;
-File.makeDirectory(exportDir);
+// Prompt user to select output directory
+exportDir = getDirectory("Choose directory to save training images");
+if (exportDir == "") {
+    exit("No output directory selected");
+}
 
 if (is3DMode) {
     // For 3D mode, create a single output folder
@@ -104,6 +107,7 @@ print("Total series: " + seriesCount);
 print("Selected channels: " + String.join(selectedChannels, ", "));
 if (applyCropping) {
     print("Random cropping: " + cropWidth + "x" + cropHeight + " pixels");
+    print("Crops per image: " + numCropsPerImage);
 }
 print("---");
 
@@ -151,78 +155,106 @@ for (s = 0; s < seriesCount; s++) {
     
     print("  Dimensions: " + width + "x" + height + ", " + channels + " channels, " + slices + " slices");
     
-    // Generate random crop coordinates for this series (used in 3D mode)
+    // Determine if cropping is possible for this series
+    canCropThisSeries = true;
     if (applyCropping && is3DMode) {
         maxX = width - cropWidth;
         maxY = height - cropHeight;
         if (maxX < 0 || maxY < 0) {
             print("  WARNING: Image too small for cropping (" + width + "x" + height + "), skipping crop");
-            applyCroppingThisSeries = false;
-        } else {
-            cropX = round(random * maxX);
-            cropY = round(random * maxY);
-            applyCroppingThisSeries = true;
-            print("  3D crop region: " + cropX + "," + cropY + " to " + (cropX+cropWidth) + "," + (cropY+cropHeight));
+            canCropThisSeries = false;
         }
     }
     
     if (is3DMode) {
-        // Export entire z-stack with selected channels
+        // Export entire z-stack with selected channels (with multiple crops if requested)
         
-        if (selectedChannels.length == 1) {
-            // Single channel z-stack
-            ch = selectedChannels[0];
-            selectWindow(originalTitle);
-            run("Duplicate...", "title=export_stack duplicate channels=" + ch);
+        // Loop for multiple crops
+        for (cropNum = 0; cropNum < numCropsPerImage; cropNum++) {
             
-            // Apply crop if enabled
-            if (applyCropping && applyCroppingThisSeries) {
-                makeRectangle(cropX, cropY, cropWidth, cropHeight);
-                run("Crop");
+            // Generate random crop coordinates for this crop iteration
+            if (applyCropping && canCropThisSeries) {
+                maxX = width - cropWidth;
+                maxY = height - cropHeight;
+                cropX = round(random * maxX);
+                cropY = round(random * maxY);
+                applyCroppingThisCrop = true;
+                if (numCropsPerImage > 1) {
+                    print("  3D crop " + (cropNum+1) + "/" + numCropsPerImage + " region: " + cropX + "," + cropY + " to " + (cropX+cropWidth) + "," + (cropY+cropHeight));
+                } else {
+                    print("  3D crop region: " + cropX + "," + cropY + " to " + (cropX+cropWidth) + "," + (cropY+cropHeight));
+                }
+            } else {
+                applyCroppingThisCrop = false;
             }
             
-            // Save with randomized name
-            filename = "train_" + IJ.pad(imageIDs[s], 6) + ".tif";
-            saveAs("Tiff", outputDir + filename);
-            close();
-            
-        } else {
-            // Multi-channel z-stack
-            // Need to merge channels in correct order
-            
-            // Extract each selected channel
-            channelNames = newArray(selectedChannels.length);
-            for (c = 0; c < selectedChannels.length; c++) {
+            if (selectedChannels.length == 1) {
+                // Single channel z-stack
+                ch = selectedChannels[0];
                 selectWindow(originalTitle);
-                run("Duplicate...", "title=ch" + selectedChannels[c] + "_temp duplicate channels=" + selectedChannels[c]);
-                channelNames[c] = "ch" + selectedChannels[c] + "_temp";
+                run("Duplicate...", "title=export_stack duplicate channels=" + ch);
+                
+                // Apply crop if enabled
+                if (applyCroppingThisCrop) {
+                    makeRectangle(cropX, cropY, cropWidth, cropHeight);
+                    run("Crop");
+                }
+                
+                // Save with randomized name (include crop number if multiple crops)
+                if (numCropsPerImage > 1) {
+                    filename = "train_" + IJ.pad(imageIDs[s], 6) + "_crop" + (cropNum+1) + ".tif";
+                } else {
+                    filename = "train_" + IJ.pad(imageIDs[s], 6) + ".tif";
+                }
+                saveAs("Tiff", outputDir + filename);
+                close();
+                
+            } else {
+                // Multi-channel z-stack
+                // Need to merge channels in correct order
+                
+                // Extract each selected channel
+                channelNames = newArray(selectedChannels.length);
+                for (c = 0; c < selectedChannels.length; c++) {
+                    selectWindow(originalTitle);
+                    run("Duplicate...", "title=ch" + selectedChannels[c] + "_temp duplicate channels=" + selectedChannels[c]);
+                    channelNames[c] = "ch" + selectedChannels[c] + "_temp";
+                }
+                
+                // Merge channels - build merge command
+                mergeCmd = "c1=[" + channelNames[0] + "]";
+                for (c = 1; c < selectedChannels.length; c++) {
+                    mergeCmd += " c" + (c+1) + "=[" + channelNames[c] + "]";
+                }
+                mergeCmd += " create";
+                
+                run("Merge Channels...", mergeCmd);
+                
+                // Rename and ensure correct dimension order (Z x C x Y x X)
+                rename("export_stack");
+                
+                // Apply crop if enabled (to entire merged stack)
+                if (applyCroppingThisCrop) {
+                    makeRectangle(cropX, cropY, cropWidth, cropHeight);
+                    run("Crop");
+                }
+                
+                // Save with randomized name (include crop number if multiple crops)
+                if (numCropsPerImage > 1) {
+                    filename = "train_" + IJ.pad(imageIDs[s], 6) + "_crop" + (cropNum+1) + ".tif";
+                } else {
+                    filename = "train_" + IJ.pad(imageIDs[s], 6) + ".tif";
+                }
+                saveAs("Tiff", outputDir + filename);
+                close();
             }
             
-            // Merge channels - build merge command
-            mergeCmd = "c1=[" + channelNames[0] + "]";
-            for (c = 1; c < selectedChannels.length; c++) {
-                mergeCmd += " c" + (c+1) + "=[" + channelNames[c] + "]";
+            if (numCropsPerImage > 1) {
+                print("  Exported 3D stack crop " + (cropNum+1) + ": " + filename);
+            } else {
+                print("  Exported 3D stack: " + filename);
             }
-            mergeCmd += " create";
-            
-            run("Merge Channels...", mergeCmd);
-            
-            // Rename and ensure correct dimension order (Z x C x Y x X)
-            rename("export_stack");
-            
-            // Apply crop if enabled (to entire merged stack)
-            if (applyCropping && applyCroppingThisSeries) {
-                makeRectangle(cropX, cropY, cropWidth, cropHeight);
-                run("Crop");
-            }
-            
-            // Save with randomized name
-            filename = "train_" + IJ.pad(imageIDs[s], 6) + ".tif";
-            saveAs("Tiff", outputDir + filename);
-            close();
         }
-        
-        print("  Exported 3D stack: " + filename);
         
     } else {
         // 2D mode - export individual slices
@@ -249,87 +281,95 @@ for (s = 0; s < seriesCount; s++) {
         
         print("  Exporting " + slicesToExport.length + " slices");
         
-        // Export each selected slice for each selected channel
+        // Export each selected slice for each selected channel (with multiple crops if requested)
         for (i = 0; i < slicesToExport.length; i++) {
             z = slicesToExport[i];
-            sliceID = globalSliceCounter;
-            globalSliceCounter++;
             
-            // Generate random crop coordinates for this slice (2D mode)
-            if (applyCropping) {
-                maxX = width - cropWidth;
-                maxY = height - cropHeight;
-                if (maxX < 0 || maxY < 0) {
-                    sliceCropX = 0;
-                    sliceCropY = 0;
-                    applyCroppingThisSlice = false;
+            // Loop for multiple crops per slice
+            for (cropNum = 0; cropNum < numCropsPerImage; cropNum++) {
+                sliceID = globalSliceCounter;
+                globalSliceCounter++;
+                
+                // Generate random crop coordinates for this slice and crop iteration (2D mode)
+                if (applyCropping) {
+                    maxX = width - cropWidth;
+                    maxY = height - cropHeight;
+                    if (maxX < 0 || maxY < 0) {
+                        sliceCropX = 0;
+                        sliceCropY = 0;
+                        applyCroppingThisSlice = false;
+                    } else {
+                        sliceCropX = round(random * maxX);
+                        sliceCropY = round(random * maxY);
+                        applyCroppingThisSlice = true;
+                    }
                 } else {
-                    sliceCropX = round(random * maxX);
-                    sliceCropY = round(random * maxY);
-                    applyCroppingThisSlice = true;
+                    applyCroppingThisSlice = false;
                 }
-            } else {
-                applyCroppingThisSlice = false;
-            }
-            
-            // Channel 1
-            if (ch1Export && channels >= 1) {
-                selectWindow(originalTitle);
-                Stack.setPosition(1, z, 1);
-                run("Duplicate...", "title=temp_export");
-                if (applyCroppingThisSlice) {
-                    makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
-                    run("Crop");
+                
+                // Channel 1
+                if (ch1Export && channels >= 1) {
+                    selectWindow(originalTitle);
+                    Stack.setPosition(1, z, 1);
+                    run("Duplicate...", "title=temp_export");
+                    if (applyCroppingThisSlice) {
+                        makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
+                        run("Crop");
+                    }
+                    filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
+                    saveAs("Tiff", ch1Dir + filename);
+                    close();
                 }
-                filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
-                saveAs("Tiff", ch1Dir + filename);
-                close();
-            }
-            
-            // Channel 2
-            if (ch2Export && channels >= 2) {
-                selectWindow(originalTitle);
-                Stack.setPosition(2, z, 1);
-                run("Duplicate...", "title=temp_export");
-                if (applyCroppingThisSlice) {
-                    makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
-                    run("Crop");
+                
+                // Channel 2
+                if (ch2Export && channels >= 2) {
+                    selectWindow(originalTitle);
+                    Stack.setPosition(2, z, 1);
+                    run("Duplicate...", "title=temp_export");
+                    if (applyCroppingThisSlice) {
+                        makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
+                        run("Crop");
+                    }
+                    filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
+                    saveAs("Tiff", ch2Dir + filename);
+                    close();
                 }
-                filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
-                saveAs("Tiff", ch2Dir + filename);
-                close();
-            }
-            
-            // Channel 3
-            if (ch3Export && channels >= 3) {
-                selectWindow(originalTitle);
-                Stack.setPosition(3, z, 1);
-                run("Duplicate...", "title=temp_export");
-                if (applyCroppingThisSlice) {
-                    makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
-                    run("Crop");
+                
+                // Channel 3
+                if (ch3Export && channels >= 3) {
+                    selectWindow(originalTitle);
+                    Stack.setPosition(3, z, 1);
+                    run("Duplicate...", "title=temp_export");
+                    if (applyCroppingThisSlice) {
+                        makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
+                        run("Crop");
+                    }
+                    filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
+                    saveAs("Tiff", ch3Dir + filename);
+                    close();
                 }
-                filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
-                saveAs("Tiff", ch3Dir + filename);
-                close();
-            }
-            
-            // Channel 4
-            if (ch4Export && channels >= 4) {
-                selectWindow(originalTitle);
-                Stack.setPosition(4, z, 1);
-                run("Duplicate...", "title=temp_export");
-                if (applyCroppingThisSlice) {
-                    makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
-                    run("Crop");
+                
+                // Channel 4
+                if (ch4Export && channels >= 4) {
+                    selectWindow(originalTitle);
+                    Stack.setPosition(4, z, 1);
+                    run("Duplicate...", "title=temp_export");
+                    if (applyCroppingThisSlice) {
+                        makeRectangle(sliceCropX, sliceCropY, cropWidth, cropHeight);
+                        run("Crop");
+                    }
+                    filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
+                    saveAs("Tiff", ch4Dir + filename);
+                    close();
                 }
-                filename = "train_" + IJ.pad(sliceID, 6) + ".tif";
-                saveAs("Tiff", ch4Dir + filename);
-                close();
             }
         }
         
-        print("  Exported " + slicesToExport.length + " slices per channel");
+        if (numCropsPerImage > 1) {
+            print("  Exported " + slicesToExport.length + " slices x " + numCropsPerImage + " crops = " + (slicesToExport.length * numCropsPerImage) + " images per channel");
+        } else {
+            print("  Exported " + slicesToExport.length + " slices per channel");
+        }
     }
     
     close(originalTitle);

@@ -22,6 +22,16 @@ lifBaseName = replace(lifName, ".lif", "");
 // Ask for cellpose-sam model path
 modelPath = File.openDialog("Select trained cellpose-sam model file");
 
+// Get analysis timestamp
+getDateAndTime(year, month, dayOfWeek, dayOfMonth, hour, minute, second);
+month++; // Month is 0-indexed
+analysisDate = "" + year + "-" + IJ.pad(month, 2) + "-" + IJ.pad(dayOfMonth, 2);
+analysisTime = "" + IJ.pad(hour, 2) + ":" + IJ.pad(minute, 2) + ":" + IJ.pad(second, 2);
+analysisTimestamp = analysisDate + " " + analysisTime;
+
+// Get model filename
+modelName = File.getName(modelPath);
+
 // Ask user to specify which channel contains each marker
 Dialog.create("Channel Configuration");
 Dialog.addMessage("Please specify which channel contains each marker:");
@@ -62,10 +72,16 @@ File.makeDirectory(tempDir);
 File.makeDirectory(roiDir);
 File.makeDirectory(shollDir);
 
+// Copy model file to output directory for reproducibility
+modelCopyPath = outputDir + modelName;
+File.copy(modelPath, modelCopyPath);
+
 print("\n=== Multi-channel Z-stack Analysis with Cellpose-SAM ===");
+print("Analysis Date/Time: " + analysisTimestamp);
 print("LIF file: " + lifName);
 print("Output directory: " + outputDir);
-print("Model: " + modelPath);
+print("Model: " + modelName);
+print("Model archived to: " + modelCopyPath);
 print("Channel Configuration:");
 print("  ROI Marker: Channel " + roiChannel);
 if (hasTdTomato) {
@@ -779,6 +795,9 @@ for (i = 0; i < seriesCount; i++) {
     setResult("ROI_Marker_Cells", i, sox9Counts[i]);
     setResult("TdTomato_Positive", i, overlapCounts[i]);
     setResult("Overlap_Percent", i, d2s(overlapPercentages[i], 2));
+    setResult("Analysis_Date", i, analysisDate);
+    setResult("Analysis_Time", i, analysisTime);
+    setResult("Cellpose_Model", i, modelName);
 }
 updateResults();
 

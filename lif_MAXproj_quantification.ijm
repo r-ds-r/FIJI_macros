@@ -46,6 +46,24 @@ for (i = 0; i < seriesCount; i++) {
         imageName = fullTitle;
     }
     
+    // Check if image name matches criteria
+    // Must contain "s100b" and must NOT contain "_Lng", "_DCV", or "_HD"
+    imageNameLower = toLowerCase(imageName);
+    hasS100b = indexOf(imageNameLower, "s100b") >= 0;
+    hasLng = indexOf(imageName, "_Lng") >= 0;
+    hasDCV = indexOf(imageName, "_DCV") >= 0;
+    hasHD = indexOf(imageName, "_HD") >= 0;
+    
+    if (!hasS100b || hasLng || hasDCV || hasHD) {
+        print("Skipping: " + imageName + " (does not match filter criteria)");
+        close("*");
+        imageNames[i] = "";
+        cellCounts[i] = 0;
+        gfapAreas[i] = 0;
+        gfapPercentages[i] = 0;
+        continue;
+    }
+    
     // Store clean image name
     imageNames[i] = imageName;
     
@@ -109,9 +127,9 @@ for (i = 0; i < seriesCount; i++) {
     // Clear previous results
     run("Clear Results");
     
-    // Analyze particles to count cells
-    // Using fixed parameters: 10px minimum, no circularity filter
-    run("Analyze Particles...", "size=10-Infinity circularity=0.0-1.0 show=Overlay display exclude clear add");
+    // Analyze particles to count cells with area filter (50-150 µm²)
+    // ImageJ will interpret the size in calibrated units if the image has calibration
+    run("Analyze Particles...", "size=50-150 circularity=0.0-1.0 show=Overlay display exclude clear add");
     
     // Get the count from Results table (number of rows)
     cellCount = nResults;
@@ -193,13 +211,17 @@ for (i = 0; i < seriesCount; i++) {
     
 }
 
-// Create final results table
+// Create final results table (only for processed images)
 run("Clear Results");
+resultRow = 0;
 for (i = 0; i < seriesCount; i++) {
-    setResult("Image", i, imageNames[i]);
-    setResult("Cell_Count", i, cellCounts[i]);
-    setResult("GFAP_Area_pixels", i, gfapAreas[i]);
-    setResult("GFAP_Percent", i, gfapPercentages[i]);
+    if (imageNames[i] != "") {
+        setResult("Image", resultRow, imageNames[i]);
+        setResult("Cell_Count", resultRow, cellCounts[i]);
+        setResult("GFAP_Area_pixels", resultRow, gfapAreas[i]);
+        setResult("GFAP_Percent", resultRow, gfapPercentages[i]);
+        resultRow++;
+    }
 }
 updateResults();
 
@@ -213,7 +235,13 @@ if (isOpen("Summary")) {
 }
 
 print("\n=== Processing Complete ===");
-print("Processed " + seriesCount + " images");
+processedCount = 0;
+for (i = 0; i < seriesCount; i++) {
+    if (imageNames[i] != "") {
+        processedCount++;
+    }
+}
+print("Processed " + processedCount + " of " + seriesCount + " images (filtered for s100b, excluding _Lng, _DCV, and _HD)");
 print("Results saved to: " + outputDir);
 print("CSV file: " + lifBaseName + "_cell_counts.csv");
 

@@ -22,6 +22,16 @@ lifBaseName = replace(lifName, ".lif", "");
 // Ask for cellpose-sam model path
 modelPath = File.openDialog("Select trained cellpose-sam model file");
 
+// Get analysis timestamp
+getDateAndTime(year, month, dayOfWeek, dayOfMonth, hour, minute, second);
+month++; // Month is 0-indexed
+analysisDate = "" + year + "-" + IJ.pad(month, 2) + "-" + IJ.pad(dayOfMonth, 2);
+analysisTime = "" + IJ.pad(hour, 2) + ":" + IJ.pad(minute, 2) + ":" + IJ.pad(second, 2);
+analysisTimestamp = analysisDate + " " + analysisTime;
+
+// Get model filename
+modelName = File.getName(modelPath);
+
 // Ask user to specify which channel contains each marker
 Dialog.create("Channel Configuration");
 Dialog.addMessage("Please specify which channel contains each marker:");
@@ -62,10 +72,16 @@ File.makeDirectory(tempDir);
 File.makeDirectory(roiDir);
 File.makeDirectory(shollDir);
 
+// Copy model file to output directory for reproducibility
+modelCopyPath = outputDir + modelName;
+File.copy(modelPath, modelCopyPath);
+
 print("\n=== Single Image Analysis with Cellpose-SAM ===");
+print("Analysis Date/Time: " + analysisTimestamp);
 print("LIF file: " + lifName);
 print("Output directory: " + outputDir);
-print("Model: " + modelPath);
+print("Model: " + modelName);
+print("Model archived to: " + modelCopyPath);
 print("Channel Configuration:");
 print("  ROI Marker: Channel " + roiChannel);
 if (hasTdTomato) {
@@ -552,6 +568,9 @@ if (hasTdTomato && roiMarkerCount > 0) {
     setResult("TdTomato_Positive", 0, 0);
     setResult("Overlap_Percent", 0, "N/A");
 }
+setResult("Analysis_Date", 0, analysisDate);
+setResult("Analysis_Time", 0, analysisTime);
+setResult("Cellpose_Model", 0, modelName);
 updateResults();
 
 saveAs("Results", outputDir + imageName + "_results.csv");
